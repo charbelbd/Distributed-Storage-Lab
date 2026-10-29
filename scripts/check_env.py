@@ -9,11 +9,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NODES = ["node1", "node2", "node3", "node4"]
+NODES = [f"node{i}" for i in range(1, 9)]
 
 
-def run(command):
-    """Run a command and return its first line of output, or None if it fails."""
+def run(command, all_lines=False):
+    """Run a command and return its first line of output (or all of it), or None if it fails."""
     if shutil.which(command[0]) is None:
         return None
     try:
@@ -21,7 +21,9 @@ def run(command):
     except subprocess.TimeoutExpired:
         return None
     output = (result.stdout or result.stderr).strip()
-    return output.splitlines()[0] if result.returncode == 0 and output else None
+    if result.returncode != 0 or not output:
+        return None
+    return output if all_lines else output.splitlines()[0]
 
 
 def show(label, value, ok=None):
@@ -35,7 +37,7 @@ print("Python")
 show("Python version", sys.version.split()[0], sys.version_info >= (3, 10))
 in_venv = sys.prefix != sys.base_prefix
 show("Virtual environment", sys.prefix if in_venv else None, in_venv)
-for package in ["flask", "requests"]:
+for package in ["fastapi", "uvicorn", "requests", "httpx", "psycopg", "numpy", "zfec", "pytest"]:
     try:
         from importlib.metadata import version
         show(f"package {package}", version(package))
@@ -54,7 +56,10 @@ show("Docker engine", run(["docker", "info", "--format", "{{.ServerVersion}}"]))
 show("kubectl", run(["kubectl", "version", "--client"]))
 show("Kubernetes cluster", run(["kubectl", "get", "nodes", "--no-headers"]))
 
-print("\nStorage node data directories")
+print("\nStorage node data (one Docker volume per node, plus a local folder for runs without Docker)")
+volumes = (run(["docker", "volume", "ls", "--format", "{{.Name}}", "--filter", "name=node"], all_lines=True) or "").split()
 for node in NODES:
+    volume = next((v for v in volumes if v.endswith(f"_{node}-data")), None)
     folder = ROOT / "data" / node
-    show(node, str(folder.relative_to(ROOT)) if folder.is_dir() else None)
+    local = f", folder data\\{node}" if folder.is_dir() else ""
+    show(node, volume and f"volume {volume}{local}")
