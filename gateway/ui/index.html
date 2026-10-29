@@ -200,6 +200,16 @@
           <div v-if="status.degraded_object_list.length"><span class="muted">Degraded objects:</span>
             <div v-for="o in status.degraded_object_list" class="tag">{{ o }}</div></div>
         </div>
+        <div class="card grow">
+          <h2>Scrubbing <button class="light" style="float:right" @click="scrubNow" :disabled="scrubbing">{{ scrubbing ? 'Checking…' : 'Scrub now' }}</button></h2>
+          <p class="muted">Every chunk on every node is read again and checked against its SHA-256, periodically and on demand.</p>
+          <p v-if="status.scrub.last_run">Last run {{ status.scrub.last_run }} ({{ status.scrub.duration_s }} s, {{ status.scrub.runs }} runs so far)<br>
+            {{ status.scrub.copies_checked }} copies checked ({{ fmt(status.scrub.bytes_checked) }}) on {{ status.scrub.nodes_checked }} nodes<br>
+            <b :class="status.scrub.corrupted ? 'error' : ''">{{ status.scrub.corrupted }}</b> corrupted,
+            <b :class="status.scrub.missing ? 'error' : ''">{{ status.scrub.missing }}</b> missing (sent to repair),
+            <b>{{ status.scrub.orphans_removed }}</b> unused copies removed</p>
+          <p v-else class="muted">No scrub has run yet.</p>
+        </div>
       </div>
     </div>
   </main>
@@ -214,7 +224,7 @@ createApp({
     newBucket: { name: '', redundancy: 'replication' },
     upKey: '', upChunking: 'fixed', upTags: '', uploading: false, progress: 0, lastUpload: '',
     q: { prefix: '', bucket: '', minKb: null, maxKb: null, after: '', before: '', tags: '' }, results: null,
-    status: null, timer: null,
+    status: null, timer: null, scrubbing: false,
   }),
   computed: {
     maxAssigned() { return Math.max(1, ...this.status.nodes.map(n => n.chunks_assigned)); },
@@ -272,6 +282,10 @@ createApp({
       if (this.q.before) p.append('before', this.q.before + 'T23:59:59');
       Object.entries(this.tags(this.q.tags)).forEach(([k, v]) => p.append('tag', k.slice(6) + ':' + v));
       this.results = await this.api('/search?' + p);
+    },
+    async scrubNow() {
+      this.scrubbing = true;
+      try { await this.api('/scrub', { method: 'POST' }); } finally { this.scrubbing = false; this.refreshStatus(); }
     },
     async refreshStatus() { if (this.tab === 'Cluster') { try { this.status = await this.api('/status'); } catch (e) {} } },
   },

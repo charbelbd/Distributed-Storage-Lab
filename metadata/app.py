@@ -38,6 +38,8 @@ DEFAULTS = {
 NODE_TIMEOUT = float(os.environ.get("NODE_TIMEOUT_SECONDS", "10"))     # no heartbeat for this long = down
 REPAIR_AFTER = float(os.environ.get("REPAIR_AFTER_SECONDS", "20"))     # down for this long = rebuild its data
 REPAIR_INTERVAL = float(os.environ.get("REPAIR_INTERVAL_SECONDS", "5"))
+SCRUB_INTERVAL = float(os.environ.get("SCRUB_INTERVAL_SECONDS", "300"))  # every 5 minutes
+ORPHAN_GRACE = float(os.environ.get("ORPHAN_GRACE_SECONDS", "600"))     # never delete a copy younger than this
 READ_BLOCK = 1024 * 1024
 
 app = FastAPI(title="metadata service")
@@ -47,6 +49,9 @@ started_at = time.time()
 reported_failures = {}          # chunk -> last repair error, so the same failure is logged once
 repair = {"running": False, "to_repair": 0, "repaired": 0, "failed": 0, "lost": 0,
           "total_repaired": 0, "last_run": None, "last_duration_s": None}
+scrub_state = {"running": False, "last_run": None, "duration_s": None, "nodes_checked": 0, "copies_checked": 0,
+               "bytes_checked": 0, "corrupted": 0, "missing": 0, "orphans_removed": 0, "runs": 0}
+maintenance_lock = threading.Lock()   # repair and scrub never run at the same time
 
 
 def log(message):
@@ -432,7 +437,7 @@ def status():
         "dedup_ratio": round(logical / unique, 3) if unique else None,
         "degraded_chunks": len(degraded), "degraded_objects": degraded_count,
         "degraded_object_list": [f"{b}/{k}" for b, k in degraded_objects],
-        "lost_chunks": len(lost), "repair": repair,
+        "lost_chunks": len(lost), "repair": repair, "scrub": scrub_state,
     }
 
 
@@ -515,14 +520,84 @@ def run_repair():
         log(f"REPAIR finished: {repair['repaired']} repaired, {repair['failed']} failed, in {repair['last_duration_s']}s")
 
 
+# ---------- scrubbing ----------
+
+def run_scrub(orphan_grace=ORPHAN_GRACE):
+    """Ask every live node to re-check all its chunks, then fix what it found:
+
+    - a copy or piece that is corrupted, or missing from the node, is taken off the
+      chunk's node list, so the repair worker rebuilds it on a healthy node;
+    - a copy the node holds but no chunk points to (left by a crash during an upload,
+      or by a node that came back after its data was repaired elsewhere) is deleted,
+      if it is older than `orphan_grace` seconds, so a running upload is never touched.
+    """
+    started = time.perf_counter()
+    scrub_state.update(running=True)
+    with db.connect() as conn:
+        chunks = db.all_chunks(conn)
+    expected = {}   # node -> {piece hash: (chunk, index in its node list)}
+    for c in chunks:
+        names = c["pieces"] if c["scheme"] == "ec" else [c["hash"]] * len(c["nodes"])
+        for i, (name, node) in enumerate(zip(names, c["nodes"])):
+            if node:
+                expected.setdefault(node, {})[name] = (c, i)
+    found = {"nodes_checked": 0, "copies_checked": 0, "bytes_checked": 0, "corrupted": 0, "missing": 0, "orphans_removed": 0}
+    lost_on = {}    # chunk hash -> (chunk, set of node-list indexes to clear)
+    for node in live_nodes():
+        try:
+            report = redundancy.http.post(f"{url_of(node)}/scrub", timeout=3600).json()
+        except requests.RequestException as error:
+            log(f"SCRUB {node} unreachable: {type(error).__name__}")
+            continue
+        found["nodes_checked"] += 1
+        found["copies_checked"] += len(report["good"]) + len(report["corrupted"])
+        found["bytes_checked"] += report["checked_bytes"]
+        found["corrupted"] += len(report["corrupted"])
+        for name, (c, i) in expected.get(node, {}).items():
+            if name not in report["good"]:
+                if name not in report["corrupted"]:
+                    found["missing"] += 1
+                lost_on.setdefault(c["hash"], (c, set()))[1].add(i)
+        for name, age in report["good"].items():
+            if name not in expected.get(node, {}) and age >= orphan_grace:
+                redundancy.http.delete(f"{url_of(node)}/chunks/{name}", timeout=30)
+                found["orphans_removed"] += 1
+    with db.connect() as conn:
+        for chunk_hash, (c, indexes) in lost_on.items():
+            if c["scheme"] == "ec":
+                new_nodes = ["" if i in indexes else n for i, n in enumerate(c["nodes"])]
+            else:
+                new_nodes = [n for i, n in enumerate(c["nodes"]) if i not in indexes]
+            db.set_chunk_nodes(conn, chunk_hash, new_nodes)
+    seconds = round(time.perf_counter() - started, 2)
+    scrub_state.update(running=False, last_run=time.strftime("%Y-%m-%d %H:%M:%S"), duration_s=seconds,
+                       runs=scrub_state["runs"] + 1, **found)
+    log(f"SCRUB finished in {seconds}s: {found['copies_checked']} copies checked on {found['nodes_checked']} nodes, "
+        f"{found['corrupted']} corrupted, {found['missing']} missing (sent to repair), {found['orphans_removed']} unused copies removed")
+    return {**scrub_state, "chunks_sent_to_repair": len(lost_on)}
+
+
+@app.post("/scrub")
+def scrub_now(orphan_grace: float = ORPHAN_GRACE):
+    """Run a scrub immediately (it also runs on its own every SCRUB_INTERVAL seconds)."""
+    with maintenance_lock:
+        return run_scrub(orphan_grace)
+
+
 def repair_loop():
+    last_scrub = time.time()
     while True:
         time.sleep(REPAIR_INTERVAL)
         # Right after a restart we do not know the nodes yet: wait for their heartbeats.
         if time.time() - started_at < REPAIR_AFTER or not live_nodes():
             continue
         try:
-            run_repair()
+            with maintenance_lock:
+                if time.time() - last_scrub >= SCRUB_INTERVAL:
+                    last_scrub = time.time()
+                    run_scrub()
+                run_repair()
         except Exception as error:   # keep the worker alive whatever happens
             repair["running"] = False
-            log(f"REPAIR error: {type(error).__name__}: {error}")
+            scrub_state["running"] = False
+            log(f"REPAIR/SCRUB error: {type(error).__name__}: {error}")

@@ -16,6 +16,7 @@ Endpoints (all need the header  X-API-Key: <key>, or ?api_key=<key> for browser 
   GET    /meta/{b}/{key}                  object metadata (versions, chunks, where they are)
   GET    /search?prefix=&bucket=&min_size=&max_size=&after=&before=&tag=name:value
   GET    /status                          nodes, free space, chunks per node, degraded objects, repair
+  POST   /scrub                           re-check every chunk on every node now
 """
 import os
 import time
@@ -124,6 +125,12 @@ async def metadata(bucket: str, key: str, request: Request):
 @app.get("/status")
 async def status(request: Request):
     return await forward(request, "/status")
+
+
+@app.post("/scrub")
+async def scrub(request: Request):
+    """Check every chunk on every node now (it also runs on its own periodically)."""
+    return await forward(request, "/scrub")
 
 
 # ---------- search ----------

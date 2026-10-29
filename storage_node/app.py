@@ -102,6 +102,36 @@ def list_chunks():
     return {"node_id": NODE_ID, "chunks": sorted(p.name for p in all_chunks())}
 
 
+@app.post("/scrub")
+def scrub():
+    """Read every chunk on this disk and check it against its hash.
+
+    Corrupted chunks are moved to quarantine (like on a normal read). The answer
+    lists the good chunks with their age, so the metadata service can find copies
+    it does not know about, and the corrupted ones, so it can rebuild them elsewhere.
+    """
+    started = time.perf_counter()
+    good, corrupted, checked_bytes = {}, [], 0
+    for path in all_chunks():
+        try:
+            data = path.read_bytes()
+            age = time.time() - path.stat().st_mtime
+        except FileNotFoundError:
+            continue  # deleted while we were scrubbing
+        checked_bytes += len(data)
+        if hashlib.sha256(data).hexdigest() == path.name:
+            good[path.name] = round(age)
+        else:
+            path.replace(DATA_DIR / "quarantine" / path.name)
+            corrupted.append(path.name)
+            log(f"SCRUB found corrupted chunk {path.name[:12]}: moved to quarantine")
+    seconds = time.perf_counter() - started
+    log(f"SCRUB checked {len(good) + len(corrupted)} chunks ({checked_bytes} bytes) in {seconds:.2f}s, "
+        f"{len(corrupted)} corrupted")
+    return {"node_id": NODE_ID, "good": good, "corrupted": corrupted, "checked_bytes": checked_bytes,
+            "seconds": round(seconds, 2)}
+
+
 def status():
     chunks = all_chunks()
     return {
