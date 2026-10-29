@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Data written by the storage nodes (the folders themselves are kept)
+data/*/*
+!data/*/.gitkeep
+
+# Generated test datasets (the scripts that create them are committed)
+datasets/
