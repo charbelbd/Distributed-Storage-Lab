@@ -1,5 +1,8 @@
 # docker compose up --build -d
-# PostgreSQL + metadata service + 4 storage nodes, each node with its own volume.
+# Gateway (users) -> metadata service -> 8 storage nodes, each with its own volume.
+# PostgreSQL keeps the metadata, Elasticsearch a searchable copy of it.
+# 8 nodes: erasure coding 4+2 puts its 6 pieces on 6 different nodes, and when a node
+# fails the rebuilt piece needs a 7th node that does not hold a piece of that chunk yet.
 
 x-node: &node
   build: { context: ., dockerfile: storage_node/Dockerfile }
@@ -7,6 +10,29 @@ x-node: &node
   depends_on: [metadata]
 
 services:
+  gateway:
+    build: { context: ., dockerfile: gateway/Dockerfile }
+    environment:
+      METADATA_URL: http://metadata:8000
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      API_KEYS: "dev-key-123=20,slow-key-789=2,bench-key-456=0"   # key=requests per second (0 = no limit)
+    ports: ["8080:8080"]
+    depends_on: [metadata]
+
+  metadata:
+    build: { context: ., dockerfile: metadata/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://storage:storage@postgres:5432/storage
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      REPLICAS: "3"
+      WRITE_QUORUM: "2"
+      READ_QUORUM: "2"
+      EC_K: "4"
+      EC_M: "2"
+      REPAIR_AFTER_SECONDS: "20"
+    ports: ["8000:8000"]
+    depends_on: [postgres]
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -16,13 +42,14 @@ services:
     ports: ["5433:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
 
-  metadata:
-    build: { context: ., dockerfile: metadata/Dockerfile }
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
     environment:
-      DATABASE_URL: postgresql://storage:storage@postgres:5432/storage
-      REPLICAS: "3"
-    ports: ["8000:8000"]
-    depends_on: [postgres]
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports: ["9200:9200"]
+    volumes: [esdata:/usr/share/elasticsearch/data]
 
   node1:
     <<: *node
@@ -44,10 +71,35 @@ services:
     environment: { NODE_ID: node4, PUBLIC_URL: "http://node4:9000", METADATA_URL: "http://metadata:8000" }
     ports: ["9004:9000"]
     volumes: [node4-data:/data]
+  node5:
+    <<: *node
+    environment: { NODE_ID: node5, PUBLIC_URL: "http://node5:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9005:9000"]
+    volumes: [node5-data:/data]
+  node6:
+    <<: *node
+    environment: { NODE_ID: node6, PUBLIC_URL: "http://node6:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9006:9000"]
+    volumes: [node6-data:/data]
+  node7:
+    <<: *node
+    environment: { NODE_ID: node7, PUBLIC_URL: "http://node7:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9007:9000"]
+    volumes: [node7-data:/data]
+  node8:
+    <<: *node
+    environment: { NODE_ID: node8, PUBLIC_URL: "http://node8:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9008:9000"]
+    volumes: [node8-data:/data]
 
 volumes:
   pgdata:
+  esdata:
   node1-data:
   node2-data:
   node3-data:
   node4-data:
+  node5-data:
+  node6-data:
+  node7-data:
+  node8-data:

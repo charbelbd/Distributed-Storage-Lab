@@ -13,3 +13,6 @@ datasets/
 # Report building
 report-build/out-*/
 ~$*
+
+# Large generated sample (created by the commands in README)
+examples/sample.bin

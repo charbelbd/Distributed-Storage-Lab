@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storage Cluster</title>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#6b7280; --line:#e3e6ea; --accent:#2563eb;
+          --ok:#16a34a; --bad:#dc2626; --warn:#d97706; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { background:#111827; color:#fff; padding:12px 20px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; margin-right:auto; }
+  header input { width:180px; }
+  nav { display:flex; gap:4px; padding:0 20px; background:#fff; border-bottom:1px solid var(--line); }
+  nav button { border:0; background:none; padding:12px 16px; font:inherit; cursor:pointer; border-bottom:3px solid transparent; color:var(--muted); }
+  nav button.on { color:var(--text); border-color:var(--accent); font-weight:600; }
+  main { padding:20px; max-width:1300px; margin:auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .grow { flex:1; min-width:280px; }
+  input, select, button { font:inherit; padding:6px 10px; border:1px solid #cbd0d6; border-radius:6px; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button.light { background:#fff; color:var(--text); border-color:#cbd0d6; }
+  button.danger { background:#fff; color:var(--bad); border-color:#f3b4b4; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
+  .buckets div { padding:8px 10px; border-radius:6px; cursor:pointer; }
+  .buckets div.on { background:#e8efff; font-weight:600; }
+  .muted { color:var(--muted); font-size:12px; }
+  .tag { display:inline-block; background:#eef2f7; border-radius:4px; padding:1px 6px; margin:1px; font-size:12px; }
+  .nodes { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px; }
+  .node { border:1px solid var(--line); border-radius:8px; padding:12px; border-top:4px solid var(--ok); }
+  .node.down { border-top-color:var(--bad); background:#fff6f6; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--ok); margin-right:6px; }
+  .down .dot { background:var(--bad); }
+  .bar { height:18px; background:#eef2f7; border-radius:4px; overflow:hidden; }
+  .bar span { display:block; height:100%; background:var(--accent); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+  .stat b { display:block; font-size:22px; }
+  .error { color:var(--bad); }
+  .ok { color:var(--ok); }
+  form.inline { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  pre { background:#f2f4f7; padding:10px; border-radius:6px; overflow:auto; font-size:12px; max-height:360px; }
+  @media (max-width: 700px) { main { padding:12px; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Distributed Storage Cluster</h1>
+    <label>API key <input v-model="apiKey" @change="saveKey"></label>
+  </header>
+  <nav>
+    <button v-for="t in ['Objects','Search','Cluster']" :class="{on: tab===t}" @click="tab=t">{{ t }}</button>
+  </nav>
+  <main>
+    <p class="error" v-if="error">{{ error }}</p>
+
+    <!-- ===== Objects ===== -->
+    <div v-if="tab==='Objects'" class="row">
+      <div class="card" style="width:260px">
+        <h2>Buckets</h2>
+        <div class="buckets">
+          <div v-for="b in buckets" :class="{on: b.name===bucket}" @click="openBucket(b.name)">
+            {{ b.name }}<br><span class="muted">{{ b.redundancy==='ec' ? 'erasure coding '+b.k+'+'+b.m : 'replication x'+b.replicas }} · {{ b.objects }} objects</span>
+          </div>
+        </div>
+        <h2 style="margin-top:16px">New bucket</h2>
+        <form @submit.prevent="createBucket" style="display:grid; gap:8px">
+          <input v-model="newBucket.name" placeholder="name" required>
+          <select v-model="newBucket.redundancy">
+            <option value="replication">Replication (3 copies, W=2, R=2)</option>
+            <option value="ec">Erasure coding (4 + 2)</option>
+          </select>
+          <button>Create</button>
+        </form>
+      </div>
+
+      <div class="grow">
+        <div class="card" v-if="bucket">
+          <h2>Upload to {{ bucket }}</h2>
+          <form class="inline" @submit.prevent="upload">
+            <input type="file" ref="file" required>
+            <input v-model="upKey" placeholder="key (default: file name)">
+            <select v-model="upChunking"><option value="fixed">fixed 4 MB chunks</option><option value="cdc">FastCDC chunks</option></select>
+            <input v-model="upTags" placeholder="tags: project=lab, type=video">
+            <button :disabled="uploading">Upload</button>
+          </form>
+          <div v-if="uploading" style="margin-top:10px"><div class="bar"><span :style="{width: progress+'%'}"></span></div>
+            <span class="muted">{{ progress }}%</span></div>
+          <p class="ok" v-if="lastUpload">{{ lastUpload }}</p>
+        </div>
+
+        <div class="card" v-if="bucket">
+          <h2>Objects in {{ bucket }}
+            <input v-model="prefix" @input="loadObjects" placeholder="filter by prefix" style="float:right; font-weight:normal"></h2>
+          <table>
+            <tr><th>Key</th><th>Size</th><th>Version</th><th>Chunks</th><th>Tags</th><th>Created</th><th></th></tr>
+            <tr v-for="o in objects">
+              <td>{{ o.key }}</td><td>{{ fmt(o.size) }}</td><td>v{{ o.version }}</td><td>{{ o.chunks }}</td>
+              <td><span class="tag" v-for="(v,k) in o.tags">{{ k }}={{ v }}</span></td>
+              <td class="muted">{{ new Date(o.created_at).toLocaleString() }}</td>
+              <td style="white-space:nowrap">
+                <a :href="downloadUrl(o)"><button class="light">Download</button></a>
+                <button class="light" @click="info(o)">Info</button>
+                <button class="danger" @click="remove(o)">Delete</button>
+              </td>
+            </tr>
+            <tr v-if="!objects.length"><td colspan="7" class="muted">No objects yet.</td></tr>
+          </table>
+        </div>
+
+        <div class="card" v-if="meta">
+          <h2>{{ meta.bucket }}/{{ meta.key }} <button class="light" style="float:right" @click="meta=null">Close</button></h2>
+          <p>{{ fmt(meta.size) }}, version {{ meta.version }} (versions: {{ meta.versions.join(', ') }}), {{ meta.redundancy }}, {{ meta.chunking }} chunking</p>
+          <table>
+            <tr><th>#</th><th>Chunk SHA-256</th><th>Size</th><th>Stored on</th><th>Healthy</th></tr>
+            <tr v-for="(c,i) in meta.chunks"><td>{{ i+1 }}</td><td class="muted">{{ c.hash.slice(0,24) }}…</td><td>{{ fmt(c.size) }}</td>
+              <td>{{ c.nodes.map(n => n || '(missing)').join(', ') }}</td>
+              <td :class="c.healthy_copies < c.target ? 'error' : 'ok'">{{ c.healthy_copies }}/{{ c.target }}</td></tr>
+          </table>
+        </div>
+        <div class="card" v-if="!bucket"><p class="muted">Pick a bucket on the left, or create one.</p></div>
+      </div>
+    </div>
+
+    <!-- ===== Search ===== -->
+    <div v-if="tab==='Search'">
+      <div class="card">
+        <h2>Search objects</h2>
+        <form class="inline" @submit.prevent="search">
+          <input v-model="q.prefix" placeholder="key prefix">
+          <select v-model="q.bucket"><option value="">all buckets</option><option v-for="b in buckets">{{ b.name }}</option></select>
+          <input v-model.number="q.minKb" type="number" placeholder="min size KB" style="width:120px">
+          <input v-model.number="q.maxKb" type="number" placeholder="max size KB" style="width:120px">
+          <label class="muted">after <input v-model="q.after" type="date"></label>
+          <label class="muted">before <input v-model="q.before" type="date"></label>
+          <input v-model="q.tags" placeholder="tags: type=video">
+          <button>Search</button>
+        </form>
+      </div>
+      <div class="card" v-if="results">
+        <h2>{{ results.count }} result(s) <span class="muted">· searched with {{ results.engine }}</span></h2>
+        <table>
+          <tr><th>Bucket</th><th>Key</th><th>Size</th><th>Version</th><th>Tags</th><th>Created</th><th></th></tr>
+          <tr v-for="o in results.results"><td>{{ o.bucket }}</td><td>{{ o.key }}</td><td>{{ fmt(o.size) }}</td><td>v{{ o.version }}</td>
+            <td><span class="tag" v-for="(v,k) in o.tags">{{ k }}={{ v }}</span></td>
+            <td class="muted">{{ new Date(o.created_at).toLocaleString() }}</td>
+            <td><a :href="downloadUrl(o)"><button class="light">Download</button></a></td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== Cluster ===== -->
+    <div v-if="tab==='Cluster' && status">
+      <div class="card">
+        <h2>Cluster summary <span class="muted">· refreshed every 2 s</span></h2>
+        <div class="stats">
+          <div class="stat"><b>{{ status.nodes.filter(n=>n.alive).length }}/{{ status.nodes.length }}</b><span class="muted">nodes up</span></div>
+          <div class="stat"><b>{{ status.objects }}</b><span class="muted">objects</span></div>
+          <div class="stat"><b>{{ fmt(status.logical_bytes) }}</b><span class="muted">stored by users</span></div>
+          <div class="stat"><b>{{ fmt(status.stored_bytes) }}</b><span class="muted">on disk (with redundancy)</span></div>
+          <div class="stat"><b>{{ status.dedup_ratio ?? '-' }}</b><span class="muted">dedup ratio</span></div>
+          <div class="stat"><b :class="status.degraded_objects ? 'error' : 'ok'">{{ status.degraded_objects }}</b><span class="muted">degraded objects</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Node health</h2>
+        <div class="nodes">
+          <div v-for="n in status.nodes" :class="['node', {down: !n.alive}]">
+            <b><span class="dot"></span>{{ n.node_id }}</b> <span class="muted">{{ n.alive ? 'healthy' : 'DOWN' }}</span><br>
+            <span class="muted">last heartbeat {{ n.seconds_since_heartbeat }} s ago</span><br>
+            free {{ fmt(n.free_bytes) }}<br>
+            {{ n.chunk_count }} pieces on disk
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="card grow">
+          <h2>Chunk distribution across nodes</h2>
+          <div v-for="n in status.nodes" style="display:flex; gap:10px; align-items:center; margin-bottom:6px">
+            <span style="width:60px">{{ n.node_id }}</span>
+            <div class="bar grow"><span :style="{width: (100*n.chunks_assigned/maxAssigned)+'%', background: n.alive ? '' : 'var(--bad)'}"></span></div>
+            <span style="width:60px; text-align:right">{{ n.chunks_assigned }}</span>
+          </div>
+          <p class="muted">Copies and erasure-coded pieces assigned to each node by the consistent hashing ring.</p>
+        </div>
+        <div class="card grow">
+          <h2>Repair</h2>
+          <p>{{ status.repair.running ? 'Repair running…' : 'Idle' }}
+            <span class="muted" v-if="status.repair.last_run"> · last run {{ status.repair.last_run }} ({{ status.repair.last_duration_s }} s)</span></p>
+          <div class="bar"><span :style="{width: repairPct+'%', background:'var(--ok)'}"></span></div>
+          <p class="muted">{{ status.repair.repaired }}/{{ status.repair.to_repair }} chunks repaired in the current/last run,
+            {{ status.repair.failed }} failed · {{ status.repair.total_repaired }} repaired in total</p>
+          <p>Degraded chunks: <b>{{ status.degraded_chunks }}</b> · lost chunks: <b :class="status.lost_chunks ? 'error':''">{{ status.lost_chunks }}</b></p>
+          <div v-if="status.degraded_object_list.length"><span class="muted">Degraded objects:</span>
+            <div v-for="o in status.degraded_object_list" class="tag">{{ o }}</div></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const { createApp } = Vue;
+createApp({
+  data: () => ({
+    tab: 'Objects', apiKey: localStorage.getItem('apiKey') || 'dev-key-123', error: '',
+    buckets: [], bucket: '', objects: [], prefix: '', meta: null,
+    newBucket: { name: '', redundancy: 'replication' },
+    upKey: '', upChunking: 'fixed', upTags: '', uploading: false, progress: 0, lastUpload: '',
+    q: { prefix: '', bucket: '', minKb: null, maxKb: null, after: '', before: '', tags: '' }, results: null,
+    status: null, timer: null,
+  }),
+  computed: {
+    maxAssigned() { return Math.max(1, ...this.status.nodes.map(n => n.chunks_assigned)); },
+    repairPct() { const r = this.status.repair; return r.to_repair ? Math.round(100 * r.repaired / r.to_repair) : 100; },
+  },
+  methods: {
+    saveKey() { localStorage.setItem('apiKey', this.apiKey); this.loadBuckets(); },
+    async api(path, options = {}) {
+      this.error = '';
+      const r = await fetch(path, { ...options, headers: { 'X-API-Key': this.apiKey, ...(options.headers || {}) } });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); this.error = `${r.status}: ${d.detail || r.statusText}`; throw new Error(this.error); }
+      return r.status === 204 ? null : r.json();
+    },
+    fmt(b) { if (b == null) return '-'; const u = ['B','KB','MB','GB','TB']; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return b.toFixed(i ? 1 : 0) + ' ' + u[i]; },
+    tags(text) { const h = {}; text.split(',').map(t => t.trim()).filter(Boolean).forEach(t => { const [k, v] = t.split('='); h['X-Tag-' + k.trim()] = (v || '').trim(); }); return h; },
+    async loadBuckets() { this.buckets = await this.api('/buckets'); },
+    async openBucket(name) { this.bucket = name; this.meta = null; await this.loadObjects(); },
+    async loadObjects() { this.objects = await this.api(`/buckets/${this.bucket}/objects?prefix=${encodeURIComponent(this.prefix)}`); },
+    async createBucket() {
+      await this.api('/buckets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.newBucket) });
+      await this.loadBuckets(); this.openBucket(this.newBucket.name); this.newBucket.name = '';
+    },
+    upload() {
+      const file = this.$refs.file.files[0], key = this.upKey || file.name;
+      const xhr = new XMLHttpRequest();   // XHR instead of fetch to show upload progress
+      xhr.open('PUT', `/buckets/${this.bucket}/objects/${encodeURIComponent(key)}?chunking=${this.upChunking}`);
+      xhr.setRequestHeader('X-API-Key', this.apiKey);
+      Object.entries(this.tags(this.upTags)).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+      xhr.upload.onprogress = e => { this.progress = Math.round(100 * e.loaded / e.total); };
+      xhr.onload = () => {
+        this.uploading = false;
+        const d = JSON.parse(xhr.responseText || '{}');
+        if (xhr.status >= 300) { this.error = `${xhr.status}: ${d.detail}`; return; }
+        this.lastUpload = `Uploaded ${d.key} v${d.version}: ${d.chunks} chunks (${d.new_chunks} new, ${d.deduplicated_chunks} deduplicated) in ${d.seconds} s`;
+        this.loadObjects(); this.loadBuckets();
+      };
+      xhr.onerror = () => { this.uploading = false; this.error = 'upload failed'; };
+      this.uploading = true; this.progress = 0; this.lastUpload = '';
+      xhr.send(file);
+    },
+    downloadUrl(o) { return `/buckets/${o.bucket}/objects/${encodeURIComponent(o.key)}?api_key=${encodeURIComponent(this.apiKey)}`; },
+    async info(o) { this.meta = await this.api(`/meta/${o.bucket}/${encodeURIComponent(o.key)}`); },
+    async remove(o) {
+      if (!confirm(`Delete ${o.key}?`)) return;
+      await this.api(`/buckets/${o.bucket}/objects/${encodeURIComponent(o.key)}`, { method: 'DELETE' });
+      this.meta = null; this.loadObjects(); this.loadBuckets();
+    },
+    async search() {
+      const p = new URLSearchParams();
+      if (this.q.prefix) p.append('prefix', this.q.prefix);
+      if (this.q.bucket) p.append('bucket', this.q.bucket);
+      if (this.q.minKb != null && this.q.minKb !== '') p.append('min_size', this.q.minKb * 1024);
+      if (this.q.maxKb != null && this.q.maxKb !== '') p.append('max_size', this.q.maxKb * 1024);
+      if (this.q.after) p.append('after', this.q.after);
+      if (this.q.before) p.append('before', this.q.before + 'T23:59:59');
+      Object.entries(this.tags(this.q.tags)).forEach(([k, v]) => p.append('tag', k.slice(6) + ':' + v));
+      this.results = await this.api('/search?' + p);
+    },
+    async refreshStatus() { if (this.tab === 'Cluster') { try { this.status = await this.api('/status'); } catch (e) {} } },
+  },
+  mounted() { this.loadBuckets(); this.timer = setInterval(this.refreshStatus, 2000); this.refreshStatus(); },
+  watch: { tab() { this.refreshStatus(); } },
+}).mount('#app');
+</script>
+</body>
+</html>

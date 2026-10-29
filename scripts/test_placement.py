@@ -24,7 +24,7 @@ except requests.RequestException:
     real = []
 synthetic = [hashlib.sha256(str(i).encode()).hexdigest() for i in range(100_000)]
 hashes = real + synthetic
-nodes = ["node1", "node2", "node3", "node4"]
+nodes = [f"node{i}" for i in range(1, 9)]   # the 8 storage nodes of the cluster
 
 
 def ring_moves(before, after):
@@ -50,12 +50,12 @@ def share(ring_nodes):
 
 print(f"{len(hashes):,} chunk hashes ({len(real)} real from the system + {len(synthetic):,} random)")
 print(f"Ring: {HashRing().virtual_nodes} virtual nodes per storage node\n")
-print("Load with 4 nodes:", share(nodes), "\n")
+print("Load with 8 nodes:", share(nodes), "\n")
 
 print(f"{'change':<28}{'ideal':>8}{'ring (primary)':>17}{'ring (all 3 copies)':>22}{'hash mod N':>13}")
 for label, before, after, ideal in [
-    ("add node5 (4 -> 5 nodes)", nodes, nodes + ["node5"], 100 / 5),
-    ("remove node4 (4 -> 3 nodes)", nodes, nodes[:3], 100 / 4),
+    ("add node9 (8 -> 9 nodes)", nodes, nodes + ["node9"], 100 / 9),
+    ("remove node8 (8 -> 7 nodes)", nodes, nodes[:7], 100 / 8),
 ]:
     primary, replicas = ring_moves(before, after)
     print(f"{label:<28}{ideal:>7.1f}%{primary:>16.1f}%{replicas:>21.1f}%{modulo_moves(before, after):>12.1f}%")
