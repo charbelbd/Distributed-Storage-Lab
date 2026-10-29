@@ -21,3 +21,6 @@ examples/sample.bin
 report-build/placeholders/
 report-build/flowcharts/*.html
 report-build/flowcharts/*.size
+
+# Personal guide for taking the screenshots (kept locally, not in the repository)
+Screenshot Guide.docx
