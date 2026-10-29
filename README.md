@@ -59,12 +59,15 @@ Send it as the header `X-API-Key`, or `?api_key=` for browser downloads.
 
 ## curl examples (PowerShell, from the `examples` folder)
 
+`sample.bin` is any file of a few MB (it is not in the repository).
+
 ```powershell
-curl.exe -H "X-API-Key: dev-key-123" -H "Content-Type: application/json" -d "@bucket-replication.json" http://localhost:8080/buckets
-curl.exe -H "X-API-Key: dev-key-123" -H "Content-Type: application/json" -d "@bucket-ec.json" http://localhost:8080/buckets
-curl.exe -H "X-API-Key: dev-key-123" -H "X-Tag-Type: document" -T hello.txt http://localhost:8080/buckets/photos/objects/docs/hello.txt
-curl.exe -i -H "X-API-Key: dev-key-123" -H "Range: bytes=0-15" http://localhost:8080/buckets/photos/objects/docs/hello.txt
-curl.exe -H "X-API-Key: dev-key-123" "http://localhost:8080/search?tag=type:document"
+curl.exe -H "X-API-Key: dev-key-123" -H "Content-Type: application/json" -d "@bucket-docs.json" http://localhost:8080/buckets
+curl.exe -H "X-API-Key: dev-key-123" -H "Content-Type: application/json" -d "@bucket-media.json" http://localhost:8080/buckets
+curl.exe -H "X-API-Key: dev-key-123" -T hello.txt http://localhost:8080/buckets/docs/objects/hello.txt
+curl.exe -H "X-API-Key: dev-key-123" -H "X-Tag-Type: video" -T sample.bin http://localhost:8080/buckets/media/objects/clips/sample.bin
+curl.exe -i -H "X-API-Key: dev-key-123" -H "Range: bytes=0-15" http://localhost:8080/buckets/docs/objects/hello.txt
+curl.exe -H "X-API-Key: dev-key-123" "http://localhost:8080/search?tag=type:video"
 curl.exe -H "X-API-Key: dev-key-123" http://localhost:8080/status
 ```
 
@@ -78,4 +81,11 @@ curl.exe -H "X-API-Key: dev-key-123" http://localhost:8080/status
 | `python scripts/compare_chunking.py` | fixed 4 MB chunks vs FastCDC |
 | `python scripts/test_placement.py` | data moved when a node is added or removed |
 | `python scripts/test_redundancy.py` | quorum reads/writes, erasure coding, automatic repair |
+| `python scripts/test_scrub.py` | scrubbing: corrupted, missing and unused copies |
+| `python scripts/make_datasets.py` | creates the two test workloads in `datasets/` |
+| `python scripts/benchmark.py small` / `large` | benchmarks, results in `results/` |
 | `pytest -v tests/test_api.py` | the gateway API |
+
+## Flowcharts
+
+Write path, read path, and failure and repair path: `docs/flowcharts/`.

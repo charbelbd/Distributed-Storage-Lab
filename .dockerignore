@@ -2,6 +2,9 @@
 data
 datasets
 results
-report-build
+docs
+draw.io
+screenshots
+examples
 *.docx
 .git

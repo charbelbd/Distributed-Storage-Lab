@@ -124,7 +124,7 @@ def next_version(conn, bucket, key):
 def save_object(conn, bucket, key, version, size, chunking, hashes, tags):
     conn.execute(
         """INSERT INTO objects (bucket, key, version, size, chunking, chunk_hashes, tags)
-           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING created_at""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
         (bucket, key, version, size, chunking, hashes, json.dumps(tags)),
     )
 

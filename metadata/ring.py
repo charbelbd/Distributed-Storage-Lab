@@ -29,10 +29,6 @@ class HashRing:
             self.owner[p] = node
             bisect.insort(self.points, p)
 
-    def remove(self, node):
-        self.points = [p for p in self.points if self.owner[p] != node]
-        self.owner = {p: n for p, n in self.owner.items() if n != node}
-
     @property
     def nodes(self):
         return sorted(set(self.owner.values()))

@@ -389,12 +389,6 @@ def search(bucket: str | None = None, prefix: str = "", min_size: int | None = N
     return {"engine": "postgresql", "count": len(found), "results": [summary(o) for o in found]}
 
 
-@app.post("/search/reindex")
-def reindex():
-    """Send the metadata of every object to Elasticsearch (e.g. after it was down)."""
-    with db.connect() as conn:
-        objects = db.search_objects(conn, limit=10**9)
-    return {"indexed": search_index.index_many(objects)}
 
 
 # ---------- cluster status ----------

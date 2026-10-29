@@ -5,7 +5,7 @@ Endpoints
   GET    /chunks/{hash}   read a chunk (the hash is checked again; corrupted chunks are refused)
   HEAD   /chunks/{hash}   does this node have the chunk? (size in Content-Length)
   DELETE /chunks/{hash}   remove a chunk
-  GET    /chunks          list every chunk hash on this node
+  POST   /scrub           re-check every chunk on this disk
   GET    /health          node id, free space, chunk count
 
 Every few seconds the node sends a heartbeat to the metadata service.
@@ -96,10 +96,6 @@ def delete_chunk(chunk_hash: str):
     log(f"DELETE {chunk_hash[:12]}")
     return {"deleted": True}
 
-
-@app.get("/chunks")
-def list_chunks():
-    return {"node_id": NODE_ID, "chunks": sorted(p.name for p in all_chunks())}
 
 
 @app.post("/scrub")
