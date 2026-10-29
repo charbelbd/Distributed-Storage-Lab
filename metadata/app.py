@@ -1,17 +1,3 @@
-"""Metadata service: knows the buckets, the objects, which chunks each object is
-made of, and where every chunk (or erasure-coded piece) is stored.
-
-Write path: the uploaded file is cut into chunks and each chunk is named by its
-    SHA-256 hash. A chunk we already have only gets one more reference (deduplication).
-    A new chunk is protected the way its bucket asks: N copies, or k + m pieces,
-    on the nodes chosen by the consistent hashing ring.
-Read path: the chunk list comes from PostgreSQL; each chunk is read from its nodes
-    (quorum read, or k pieces decoded) and checked against its hash.
-Repair: a background worker notices chunks that lost copies or pieces on a dead
-    node and rebuilds them on healthy nodes.
-
-Only the gateway talks to this service; users go through the gateway.
-"""
 import os
 import re
 import tempfile
@@ -35,23 +21,23 @@ DEFAULTS = {
     "k": int(os.environ.get("EC_K", "4")),
     "m": int(os.environ.get("EC_M", "2")),
 }
-NODE_TIMEOUT = float(os.environ.get("NODE_TIMEOUT_SECONDS", "10"))     # no heartbeat for this long = down
-REPAIR_AFTER = float(os.environ.get("REPAIR_AFTER_SECONDS", "20"))     # down for this long = rebuild its data
+NODE_TIMEOUT = float(os.environ.get("NODE_TIMEOUT_SECONDS", "10"))
+REPAIR_AFTER = float(os.environ.get("REPAIR_AFTER_SECONDS", "20"))
 REPAIR_INTERVAL = float(os.environ.get("REPAIR_INTERVAL_SECONDS", "5"))
-SCRUB_INTERVAL = float(os.environ.get("SCRUB_INTERVAL_SECONDS", "300"))  # every 5 minutes
-ORPHAN_GRACE = float(os.environ.get("ORPHAN_GRACE_SECONDS", "600"))     # never delete a copy younger than this
+SCRUB_INTERVAL = float(os.environ.get("SCRUB_INTERVAL_SECONDS", "300"))
+ORPHAN_GRACE = float(os.environ.get("ORPHAN_GRACE_SECONDS", "600"))
 READ_BLOCK = 1024 * 1024
 
 app = FastAPI(title="metadata service")
-nodes = {}                      # node id -> last heartbeat (url, free space, chunk count, time)
-nodes_lock = threading.RLock()     # re-entrant: is_alive() is also called while holding it
+nodes = {}
+nodes_lock = threading.RLock()
 started_at = time.time()
-reported_failures = {}          # chunk -> last repair error, so the same failure is logged once
+reported_failures = {}
 repair = {"running": False, "to_repair": 0, "repaired": 0, "failed": 0, "lost": 0,
           "total_repaired": 0, "last_run": None, "last_duration_s": None}
 scrub_state = {"running": False, "last_run": None, "duration_s": None, "nodes_checked": 0, "copies_checked": 0,
                "bytes_checked": 0, "corrupted": 0, "missing": 0, "orphans_removed": 0, "runs": 0}
-maintenance_lock = threading.Lock()   # repair and scrub never run at the same time
+maintenance_lock = threading.Lock()
 
 
 def log(message):
@@ -60,7 +46,7 @@ def log(message):
 
 @app.on_event("startup")
 def startup():
-    for _ in range(60):  # PostgreSQL may still be starting
+    for _ in range(60):
         try:
             db.init()
             log("connected to PostgreSQL")
@@ -73,8 +59,6 @@ def startup():
     search_index.setup(log)
     threading.Thread(target=repair_loop, daemon=True).start()
 
-
-# ---------- storage nodes ----------
 
 @app.post("/heartbeat")
 def heartbeat(beat: dict):
@@ -113,8 +97,6 @@ def alive_first(holders):
 def ring():
     return HashRing(live_nodes())
 
-
-# ---------- buckets ----------
 
 @app.post("/buckets", status_code=201)
 def create_bucket(body: dict):
@@ -160,22 +142,17 @@ def bucket_or_404(conn, name):
     return bucket
 
 
-# ---------- write path ----------
-
 def chunk_key(content_hash, bucket):
-    """Deduplication works within one protection scheme: the same content uploaded to a
-    replicated bucket and to an erasure-coded bucket is protected both ways, as each bucket asks."""
     if bucket["redundancy"] == "ec":
         return f"{content_hash}-ec{bucket['k']}+{bucket['m']}"
     return content_hash
 
 
 def protect_chunk(data, chunk_hash, bucket):
-    """Store a new chunk on the nodes, the way its bucket asks."""
     placement = ring()
     if bucket["redundancy"] == "ec":
         k, m = bucket["k"], bucket["m"]
-        targets = placement.lookup(chunk_hash, k + m)   # the ring only uses the first hex digits
+        targets = placement.lookup(chunk_hash, k + m)
         if len(targets) < k + m:
             raise QuorumError(f"erasure coding {k}+{m} needs {k + m} live nodes, only {len(targets)} are up")
         pieces, holders, padding = redundancy.write_ec(data, targets, url_of, k, m)
@@ -201,7 +178,7 @@ def store_object(path, bucket_name, key, method, tags):
         for data in chunk(blocks(), method):
             chunk_hash = chunk_key(sha(data), bucket)
             if db.get_chunk(conn, chunk_hash):
-                db.add_reference(conn, chunk_hash)        # already stored: one more reference
+                db.add_reference(conn, chunk_hash)
                 reused += 1
             else:
                 try:
@@ -229,9 +206,7 @@ def store_object(path, bucket_name, key, method, tags):
 async def put_object(bucket: str, key: str, request: Request, chunking: str = "fixed"):
     if chunking not in ("fixed", "cdc"):
         raise HTTPException(400, "chunking must be fixed or cdc")
-    # User-defined tags come as headers:  X-Tag-Project: thesis  ->  {"project": "thesis"}
     tags = {k[6:].lower(): v for k, v in request.headers.items() if k.lower().startswith("x-tag-")}
-    # Save the upload to a temporary file first, so large files never sit in memory.
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         async for block in request.stream():
             tmp.write(block)
@@ -241,8 +216,6 @@ async def put_object(bucket: str, key: str, request: Request, chunking: str = "f
         os.unlink(tmp.name)
 
 
-# ---------- read path ----------
-
 def read_chunk(c, read_quorum):
     if c["scheme"] == "ec":
         return redundancy.read_ec(c["hash"][:64], c["pieces"], c["nodes"], url_of, c["k"], c["m"], c["padding"])
@@ -251,7 +224,6 @@ def read_chunk(c, read_quorum):
 
 
 def parse_range(header, size):
-    """'bytes=100-199' -> (100, 199). Also 'bytes=100-' and 'bytes=-50' (the last 50 bytes)."""
     match = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip())
     if not match or match.groups() == ("", ""):
         raise HTTPException(416, "unsupported Range header")
@@ -290,7 +262,7 @@ def get_object(bucket: str, key: str, request: Request, version: int | None = No
             c = chunks[chunk_hash]
             chunk_start, offset = offset, offset + c["size"]
             if offset <= start or chunk_start > end:
-                continue                       # this chunk is outside the requested range
+                continue
             try:
                 data = read_chunk(c, b["read_quorum"])
             except QuorumError as error:
@@ -298,7 +270,6 @@ def get_object(bucket: str, key: str, request: Request, version: int | None = No
                 raise
             yield data[max(start - chunk_start, 0): end - chunk_start + 1]
 
-    # Read the first needed chunk before answering, so a failure becomes a clean 503.
     body = stream()
     try:
         first = next(body, b"")
@@ -335,8 +306,6 @@ def object_metadata(bucket: str, key: str, version: int | None = None):
                        for h in obj["chunk_hashes"]]}
 
 
-# ---------- delete, list, search ----------
-
 def delete_from_nodes(c):
     targets = list(zip(c["pieces"], c["nodes"])) if c["scheme"] == "ec" else [(c["hash"], n) for n in c["nodes"]]
     for piece_hash, node in targets:
@@ -344,7 +313,7 @@ def delete_from_nodes(c):
             try:
                 redundancy.http.delete(f"{url_of(node)}/chunks/{piece_hash}", timeout=10)
             except requests.RequestException:
-                pass   # node down: the copy stays behind until the scrubber cleans it
+                pass
 
 
 @app.delete("/buckets/{bucket}/objects/{key:path}")
@@ -361,7 +330,7 @@ def delete_object(bucket: str, key: str):
                 if c:
                     unused.append(c)
         conn.execute("DELETE FROM objects WHERE bucket=%s AND key=%s", (bucket, key))
-    for c in unused:          # only chunks that no object uses anymore
+    for c in unused:
         delete_from_nodes(c)
     search_index.remove(bucket, key)
     log(f"DELETE {bucket}/{key}: {len(rows)} version(s), {len(unused)} chunks no longer used and removed from the nodes")
@@ -382,16 +351,11 @@ def summary(o):
 @app.get("/search")
 def search(bucket: str | None = None, prefix: str = "", min_size: int | None = None, max_size: int | None = None,
            after: str | None = None, before: str | None = None, tag: list[str] | None = Query(None), limit: int = 100):
-    """Search in PostgreSQL (the gateway uses Elasticsearch first and falls back to this)."""
     tags = dict(t.split(":", 1) for t in (tag or []) if ":" in t)
     with db.connect() as conn:
         found = db.search_objects(conn, bucket, prefix, min_size, max_size, after, before, tags, limit)
     return {"engine": "postgresql", "count": len(found), "results": [summary(o) for o in found]}
 
-
-
-
-# ---------- cluster status ----------
 
 def healthy_copies(c):
     holders = [n for n in c["nodes"] if n]
@@ -437,19 +401,15 @@ def status():
 
 @app.get("/chunk-hashes")
 def chunk_hashes():
-    """Every chunk hash with its nodes (used by the placement test)."""
     with db.connect() as conn:
         return {h: n for h, n in conn.execute("SELECT hash, nodes FROM chunks").fetchall()}
 
-
-# ---------- repair ----------
 
 def failed(node_id):
     return not node_id or seconds_silent(node_id) > REPAIR_AFTER
 
 
 def repair_chunk(c):
-    """Rebuild missing copies or pieces of one chunk on healthy nodes. Returns the new node list."""
     live = live_nodes()
     if c["scheme"] == "ec":
         k, m = c["k"], c["m"]
@@ -490,7 +450,7 @@ def run_repair():
         return
     started = time.perf_counter()
     repair.update(running=True, to_repair=len(todo), repaired=0, failed=0, lost=0)
-    quiet = all(c["hash"] in reported_failures for c in todo)   # nothing new since the last attempt
+    quiet = all(c["hash"] in reported_failures for c in todo)
     if not quiet:
         log(f"REPAIR started: {len(todo)} chunks lost copies or pieces")
     for c in todo:
@@ -514,29 +474,19 @@ def run_repair():
         log(f"REPAIR finished: {repair['repaired']} repaired, {repair['failed']} failed, in {repair['last_duration_s']}s")
 
 
-# ---------- scrubbing ----------
-
 def run_scrub(orphan_grace=ORPHAN_GRACE):
-    """Ask every live node to re-check all its chunks, then fix what it found:
-
-    - a copy or piece that is corrupted, or missing from the node, is taken off the
-      chunk's node list, so the repair worker rebuilds it on a healthy node;
-    - a copy the node holds but no chunk points to (left by a crash during an upload,
-      or by a node that came back after its data was repaired elsewhere) is deleted,
-      if it is older than `orphan_grace` seconds, so a running upload is never touched.
-    """
     started = time.perf_counter()
     scrub_state.update(running=True)
     with db.connect() as conn:
         chunks = db.all_chunks(conn)
-    expected = {}   # node -> {piece hash: (chunk, index in its node list)}
+    expected = {}
     for c in chunks:
         names = c["pieces"] if c["scheme"] == "ec" else [c["hash"]] * len(c["nodes"])
         for i, (name, node) in enumerate(zip(names, c["nodes"])):
             if node:
                 expected.setdefault(node, {})[name] = (c, i)
     found = {"nodes_checked": 0, "copies_checked": 0, "bytes_checked": 0, "corrupted": 0, "missing": 0, "orphans_removed": 0}
-    lost_on = {}    # chunk hash -> (chunk, set of node-list indexes to clear)
+    lost_on = {}
     for node in live_nodes():
         try:
             report = redundancy.http.post(f"{url_of(node)}/scrub", timeout=3600).json()
@@ -573,7 +523,6 @@ def run_scrub(orphan_grace=ORPHAN_GRACE):
 
 @app.post("/scrub")
 def scrub_now(orphan_grace: float = ORPHAN_GRACE):
-    """Run a scrub immediately (it also runs on its own every SCRUB_INTERVAL seconds)."""
     with maintenance_lock:
         return run_scrub(orphan_grace)
 
@@ -582,7 +531,6 @@ def repair_loop():
     last_scrub = time.time()
     while True:
         time.sleep(REPAIR_INTERVAL)
-        # Right after a restart we do not know the nodes yet: wait for their heartbeats.
         if time.time() - started_at < REPAIR_AFTER or not live_nodes():
             continue
         try:
@@ -591,7 +539,7 @@ def repair_loop():
                     last_scrub = time.time()
                     run_scrub()
                 run_repair()
-        except Exception as error:   # keep the worker alive whatever happens
+        except Exception as error:
             repair["running"] = False
             scrub_state["running"] = False
             log(f"REPAIR/SCRUB error: {type(error).__name__}: {error}")

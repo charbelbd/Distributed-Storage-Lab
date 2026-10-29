@@ -1,4 +1,3 @@
-"""API tests for the gateway. Run with the cluster up:   pytest -v tests/test_api.py"""
 import hashlib
 import os
 import time
@@ -9,9 +8,9 @@ import requests
 
 GATEWAY = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 KEY = {"X-API-Key": os.environ.get("API_KEY", "dev-key-123")}
-RUN = uuid.uuid4().hex[:6]           # unique names, so the tests can run many times
+RUN = uuid.uuid4().hex[:6]
 REP, EC = f"test-rep-{RUN}", f"test-ec-{RUN}"
-DATA = os.urandom(9 * 1024 * 1024 + 777)   # 3 chunks of 4 MB
+DATA = os.urandom(9 * 1024 * 1024 + 777)
 
 
 def api(method, path, **kwargs):
@@ -26,8 +25,6 @@ def buckets():
     yield
 
 
-# ---------- authentication and rate limiting ----------
-
 def test_missing_api_key_is_rejected():
     assert requests.get(f"{GATEWAY}/buckets").status_code == 401
 
@@ -37,13 +34,10 @@ def test_wrong_api_key_is_rejected():
 
 
 def test_rate_limit_returns_429():
-    # slow-key-789 is limited to 2 requests per second (burst of 4)
     codes = [requests.get(f"{GATEWAY}/buckets", headers={"X-API-Key": "slow-key-789"}).status_code for _ in range(10)]
     assert 429 in codes and codes[0] == 200
     time.sleep(2)
 
-
-# ---------- buckets ----------
 
 def test_list_buckets_shows_both_redundancy_types():
     names = {b["name"]: b for b in api("GET", "/buckets").json()}
@@ -60,8 +54,6 @@ def test_quorum_rule_is_enforced():
     assert r.status_code == 400 and "W + R > N" in r.json()["detail"]
 
 
-# ---------- objects ----------
-
 @pytest.mark.parametrize("bucket", [REP, EC])
 def test_upload_and_download(bucket):
     r = api("PUT", f"/buckets/{bucket}/objects/docs/report.bin", data=DATA, headers={"X-Tag-Project": "lab", "X-Tag-Type": "binary"})
@@ -73,7 +65,7 @@ def test_upload_and_download(bucket):
 
 @pytest.mark.parametrize("bucket", [REP, EC])
 def test_byte_range_crossing_a_chunk_boundary(bucket):
-    start, end = 4 * 1024 * 1024 - 10, 4 * 1024 * 1024 + 9      # 20 bytes across chunks 1 and 2
+    start, end = 4 * 1024 * 1024 - 10, 4 * 1024 * 1024 + 9
     r = api("GET", f"/buckets/{bucket}/objects/docs/report.bin", headers={"Range": f"bytes={start}-{end}"})
     assert r.status_code == 206
     assert r.headers["Content-Range"] == f"bytes {start}-{end}/{len(DATA)}"
@@ -90,7 +82,7 @@ def test_head_and_metadata():
     assert head.status_code == 200 and int(head.headers["Content-Length"]) == len(DATA)
     meta = api("GET", f"/meta/{REP}/docs/report.bin").json()
     assert meta["size"] == len(DATA) and len(meta["chunks"]) == 3
-    assert all(len(c["nodes"]) == 3 for c in meta["chunks"])                      # 3 copies
+    assert all(len(c["nodes"]) == 3 for c in meta["chunks"])
 
 
 def test_erasure_coded_chunks_have_six_pieces_on_six_nodes():
@@ -122,10 +114,8 @@ def test_delete_object():
     assert api("GET", f"/buckets/{REP}/objects/temp.txt").status_code == 404
 
 
-# ---------- search and status ----------
-
 def test_search_by_prefix_size_and_tag():
-    time.sleep(1.5)  # Elasticsearch makes new documents searchable within about a second
+    time.sleep(1.5)
     r = api("GET", "/search", params={"bucket": REP, "prefix": "docs/", "min_size": 1024 * 1024, "tag": "project:lab"}).json()
     assert r["count"] == 1 and r["results"][0]["key"] == "docs/report.bin"
     assert r["engine"] in ("elasticsearch", "postgresql")

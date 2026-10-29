@@ -1,14 +1,3 @@
-"""Phase 7 test: periodic scrubbing.
-
-We damage the stored data on purpose, directly on the nodes' disks:
-  - flip a byte of one copy of a chunk      (silent corruption)
-  - delete one copy of another chunk         (lost file)
-  - put a chunk on a node that nobody uses   (leftover copy)
-then run the scrubber. It must find all three; the repair worker must then
-bring every chunk back to 3 good copies, and the leftover copy must be gone.
-
-Run with the cluster up:  python scripts/test_scrub.py
-"""
 import hashlib
 import os
 import subprocess
@@ -20,7 +9,7 @@ import requests
 GATEWAY = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 KEY = {"X-API-Key": "bench-key-456"}
 BUCKET = f"scrub-{uuid.uuid4().hex[:6]}"
-DATA = os.urandom(9 * 1024 * 1024)          # 3 chunks
+DATA = os.urandom(9 * 1024 * 1024)
 
 
 def api(method, path, **kw):
@@ -54,7 +43,6 @@ requests.put(f"http://localhost:9001/chunks/{orphan_hash}", data=orphan)
 print(f"  leftover: chunk {orphan_hash[:12]} stored on {orphan_node}, not used by any object\n")
 
 print("Running the scrubber (every node re-reads all its chunks)...")
-# orphan_grace=0: delete unused copies right away (normally only after 10 minutes)
 r = api("POST", "/scrub?orphan_grace=0").json()
 print(f"  {r['copies_checked']} copies checked ({r['bytes_checked'] / 2**20:.0f} MB) on {r['nodes_checked']} nodes in {r['duration_s']} s\n")
 check("the corrupted copy is found", r["corrupted"] >= 1, f"{r['corrupted']} corrupted")

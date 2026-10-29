@@ -1,12 +1,3 @@
-"""Phase 3 test: deduplication with reference counting.
-
-1. Upload a file, then upload the same content under a second name:
-   the second upload sends no new chunks, it only adds references.
-2. Delete the first object: the chunks stay, because the second one still uses them.
-3. Delete the second object: now nobody uses the chunks, so they are removed from the nodes.
-
-Run with the cluster up:  python scripts/test_dedup.py
-"""
 import os
 import uuid
 
@@ -31,14 +22,13 @@ def node_chunk_counts():
 
 
 def stats():
-    """(unique chunks, total references) from the metadata of the cluster."""
     s = api("GET", f"{GATEWAY}/status").json()
     refs = sum(len(o) for o in [api("GET", f"{GATEWAY}/meta/{BUCKET}/{k}").json()["chunk_hashes"]
                                 for k in [o["key"] for o in api("GET", f"{OBJ}").json()]])
     return s["unique_chunks"], refs
 
 
-content = os.urandom(10 * 1024 * 1024 + 12345)  # about 10 MB -> 3 chunks of 4 MB
+content = os.urandom(10 * 1024 * 1024 + 12345)
 api("POST", f"{GATEWAY}/buckets", json={"name": BUCKET, "redundancy": "replication"})
 before = stats()
 print(f"File of {len(content):,} bytes, fixed 4 MB chunks, 3 copies of each chunk\n")

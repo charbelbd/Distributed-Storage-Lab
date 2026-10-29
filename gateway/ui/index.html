@@ -60,7 +60,6 @@
   <main>
     <p class="error" v-if="error">{{ error }}</p>
 
-    <!-- ===== Objects ===== -->
     <div v-if="tab==='Objects'" class="row">
       <div class="card" style="width:260px">
         <h2>Buckets</h2>
@@ -128,7 +127,6 @@
       </div>
     </div>
 
-    <!-- ===== Search ===== -->
     <div v-if="tab==='Search'">
       <div class="card">
         <h2>Search objects</h2>
@@ -155,7 +153,6 @@
       </div>
     </div>
 
-    <!-- ===== Cluster ===== -->
     <div v-if="tab==='Cluster' && status">
       <div class="card">
         <h2>Cluster summary <span class="muted">· refreshed every 2 s</span></h2>
@@ -249,7 +246,7 @@ createApp({
     },
     upload() {
       const file = this.$refs.file.files[0], key = this.upKey || file.name;
-      const xhr = new XMLHttpRequest();   // XHR instead of fetch to show upload progress
+      const xhr = new XMLHttpRequest();
       xhr.open('PUT', `/buckets/${this.bucket}/objects/${encodeURIComponent(key)}?chunking=${this.upChunking}`);
       xhr.setRequestHeader('X-API-Key', this.apiKey);
       Object.entries(this.tags(this.upTags)).forEach(([k, v]) => xhr.setRequestHeader(k, v));

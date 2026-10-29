@@ -1,9 +1,3 @@
-# docker compose up --build -d
-# Gateway (users) -> metadata service -> 8 storage nodes, each with its own volume.
-# PostgreSQL keeps the metadata, Elasticsearch a searchable copy of it.
-# 8 nodes: erasure coding 4+2 puts its 6 pieces on 6 different nodes, and when a node
-# fails the rebuilt piece needs a 7th node that does not hold a piece of that chunk yet.
-
 x-node: &node
   build: { context: ., dockerfile: storage_node/Dockerfile }
   image: storage-node
@@ -15,7 +9,7 @@ services:
     environment:
       METADATA_URL: http://metadata:8000
       ELASTICSEARCH_URL: http://elasticsearch:9200
-      API_KEYS: "dev-key-123=20,slow-key-789=2,bench-key-456=0"   # key=requests per second (0 = no limit)
+      API_KEYS: "dev-key-123=20,slow-key-789=2,bench-key-456=0"
     ports: ["8080:8080"]
     depends_on: [metadata]
 
@@ -30,7 +24,7 @@ services:
       EC_K: "4"
       EC_M: "2"
       REPAIR_AFTER_SECONDS: "20"
-      SCRUB_INTERVAL_SECONDS: "3600"   # check every chunk once an hour (also "Scrub now" in the UI)
+      SCRUB_INTERVAL_SECONDS: "3600"
     ports: ["8000:8000"]
     depends_on: [postgres]
 

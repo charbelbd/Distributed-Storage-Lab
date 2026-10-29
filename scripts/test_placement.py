@@ -1,13 +1,3 @@
-"""Phase 3 test: how many chunks move when a node is added or removed?
-
-For every chunk we look at which nodes the consistent hashing ring would choose
-before and after the change, and count the chunks whose primary node changed, and the share of all copies
-(3 per chunk) that have to be copied to another node.
-We do the same with simple "hash mod number of nodes" placement for comparison.
-
-Uses the real chunk hashes stored in the system, plus 100,000 random hashes so
-the percentages are stable.  Run:  python scripts/test_placement.py
-"""
 import hashlib
 import os
 import sys
@@ -15,7 +5,7 @@ import sys
 import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from metadata.ring import HashRing  # noqa: E402
+from metadata.ring import HashRing
 
 API = os.environ.get("API_URL", "http://localhost:8000")
 try:
@@ -24,13 +14,12 @@ except requests.RequestException:
     real = []
 synthetic = [hashlib.sha256(str(i).encode()).hexdigest() for i in range(100_000)]
 hashes = real + synthetic
-nodes = [f"node{i}" for i in range(1, 9)]   # the 8 storage nodes of the cluster
+nodes = [f"node{i}" for i in range(1, 9)]
 
 
 def ring_moves(before, after):
     a, b = HashRing(before), HashRing(after)
     primary = sum(1 for h in hashes if a.lookup(h)[0] != b.lookup(h)[0])
-    # Of all the stored copies (3 per chunk), how many must be copied to a different node?
     moved_copies = sum(len(set(b.lookup(h, 3)) - set(a.lookup(h, 3))) for h in hashes)
     return 100 * primary / len(hashes), 100 * moved_copies / (3 * len(hashes))
 

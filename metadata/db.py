@@ -1,4 +1,3 @@
-"""PostgreSQL storage for buckets, object metadata and chunk locations."""
 import json
 import os
 
@@ -56,8 +55,6 @@ def init():
         conn.execute(SCHEMA)
 
 
-# ---------- buckets ----------
-
 def create_bucket(conn, b):
     conn.execute(
         """INSERT INTO buckets (name, redundancy, replicas, write_quorum, read_quorum, k, m)
@@ -76,8 +73,6 @@ def list_buckets(conn):
                             GROUP BY b.name ORDER BY b.name""").fetchall()
     return [{**dict(zip(BUCKET_FIELDS, r)), "objects": r[-2], "bytes": r[-1]} for r in rows]
 
-
-# ---------- chunks ----------
 
 def get_chunk(conn, chunk_hash):
     row = conn.execute(f"SELECT {', '.join(CHUNK_FIELDS)} FROM chunks WHERE hash = %s", (chunk_hash,)).fetchone()
@@ -101,7 +96,6 @@ def add_reference(conn, chunk_hash):
 
 
 def remove_reference(conn, chunk_hash):
-    """Count one reference less. Returns the chunk if nobody uses it anymore (it must be deleted)."""
     row = conn.execute("UPDATE chunks SET refcount = refcount - 1 WHERE hash = %s RETURNING refcount", (chunk_hash,)).fetchone()
     if row and row[0] <= 0:
         chunk = get_chunk(conn, chunk_hash)
@@ -113,8 +107,6 @@ def remove_reference(conn, chunk_hash):
 def set_chunk_nodes(conn, chunk_hash, nodes):
     conn.execute("UPDATE chunks SET nodes = %s WHERE hash = %s", (nodes, chunk_hash))
 
-
-# ---------- objects ----------
 
 def next_version(conn, bucket, key):
     row = conn.execute("SELECT COALESCE(MAX(version), 0) FROM objects WHERE bucket = %s AND key = %s", (bucket, key)).fetchone()
@@ -139,7 +131,6 @@ def get_object(conn, bucket, key, version=None):
 
 
 def search_objects(conn, bucket=None, prefix="", min_size=None, max_size=None, after=None, before=None, tags=None, limit=100):
-    """Latest version of each object matching every given filter."""
     where, args = ["key LIKE %s"], [prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"]
     if bucket:
         where.append("bucket = %s"); args.append(bucket)

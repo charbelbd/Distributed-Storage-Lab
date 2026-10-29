@@ -1,10 +1,3 @@
-"""Phase 2 test: talk to one storage node directly.
-
-Checks put / head / get / delete, that a chunk with the wrong hash is refused,
-and that a chunk corrupted on disk is detected on read and never served.
-
-Run with the cluster up:  python scripts/test_node.py
-"""
 import hashlib
 import os
 import subprocess
@@ -44,7 +37,6 @@ print("\nCorruption on disk")
 data = os.urandom(50_000)
 h = hashlib.sha256(data).hexdigest()
 requests.put(f"{NODE}/chunks/{h}", data=data)
-# Flip the chunk's content directly on the node's disk, as a failing disk would.
 subprocess.run(["docker", "compose", "exec", "-T", CONTAINER_SERVICE, "sh", "-c",
                 f"printf 'XXXX' | dd of=/data/{h[:2]}/{h} bs=1 seek=100 conv=notrunc 2>/dev/null"], check=True)
 print(f"  changed 4 bytes of chunk {h[:16]}... inside the {CONTAINER_SERVICE} container")

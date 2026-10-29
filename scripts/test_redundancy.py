@@ -1,17 +1,3 @@
-"""Phase 4 test: what happens when storage nodes fail?
-
-  1. Replication N=3, W=2, R=2: a read still works with one copy's node down,
-     and is refused when only one copy is left (R=2 cannot be met).
-  2. Write quorum: with most nodes down, an upload is refused instead of being
-     stored with too few copies.
-  3. Erasure coding 4+2: reads work with 2 nodes down (rebuilt from 4 pieces),
-     and fail with 3 down.
-  4. Repair: a node stays down; after 20 s the repair worker rebuilds every lost
-     copy and piece on the other nodes, and no object is degraded anymore.
-
-Nodes are stopped with "docker compose kill" (like a crash) and started again.
-Run with the cluster up:  python scripts/test_redundancy.py
-"""
 import os
 import subprocess
 import time
@@ -24,7 +10,7 @@ KEY = {"X-API-Key": "bench-key-456"}
 RUN = uuid.uuid4().hex[:6]
 REP, EC = f"rep-{RUN}", f"ec-{RUN}"
 ALL = [f"node{i}" for i in range(1, 9)]
-DATA = os.urandom(6 * 1024 * 1024)   # 2 chunks
+DATA = os.urandom(6 * 1024 * 1024)
 
 
 def api(method, path, **kw):
@@ -53,7 +39,7 @@ def read(bucket, key):
     try:
         r = api("GET", f"/buckets/{bucket}/objects/{key}")
         return r.status_code, (r.content == DATA if r.status_code == 200 else r.json().get("detail"))
-    except requests.RequestException as error:   # the download broke in the middle
+    except requests.RequestException as error:
         return 0, f"download interrupted: {type(error).__name__}"
 
 
@@ -111,7 +97,6 @@ degraded_seen = 0
 while time.time() - started < 90:
     s = api("GET", "/status").json()
     degraded_seen = max(degraded_seen, s["degraded_objects"])
-    # Done only after the crash was noticed (objects degraded) and repaired (back to 0).
     if degraded_seen and s["degraded_objects"] == 0 and s["repair"]["total_repaired"] > repaired_before:
         break
     time.sleep(2)

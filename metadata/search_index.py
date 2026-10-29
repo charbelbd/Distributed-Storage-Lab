@@ -1,9 +1,3 @@
-"""Keeps a copy of the object metadata in Elasticsearch, for searching.
-
-PostgreSQL stays the source of truth. Elasticsearch only holds a searchable copy:
-if it is down, uploads still work and the gateway searches PostgreSQL instead.
-When Elasticsearch comes (back) up, everything is indexed again.
-"""
 import json
 import os
 import threading
@@ -45,12 +39,10 @@ def setup(logger):
 
 
 def wait_and_reindex():
-    """Wait until Elasticsearch answers, create the index, and index every object."""
     from . import db
     while True:
         try:
             requests.get(ES_URL, timeout=2).raise_for_status()
-            # Start from an empty index, so objects deleted while it was down disappear too.
             requests.delete(f"{ES_URL}/{INDEX}", timeout=10)
             requests.put(f"{ES_URL}/{INDEX}", json=MAPPING, timeout=10).raise_for_status()
             with db.connect() as conn:

@@ -1,19 +1,14 @@
-# Python
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 
-# Data written by the storage nodes when they run without Docker (the folders are kept)
 data/*/*
 !data/*/.gitkeep
 
-# Generated test datasets (make_datasets.py recreates them)
 datasets/
 
-# Large sample file used by the curl examples
 examples/sample.bin
 
-# Word documents and their lock files (kept locally)
 *.docx
 ~$*

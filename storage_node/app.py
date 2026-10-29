@@ -1,15 +1,3 @@
-"""Storage node: keeps chunks on its local disk, named by their SHA-256 hash.
-
-Endpoints
-  PUT    /chunks/{hash}   store a chunk (rejected if the content does not match the hash)
-  GET    /chunks/{hash}   read a chunk (the hash is checked again; corrupted chunks are refused)
-  HEAD   /chunks/{hash}   does this node have the chunk? (size in Content-Length)
-  DELETE /chunks/{hash}   remove a chunk
-  POST   /scrub           re-check every chunk on this disk
-  GET    /health          node id, free space, chunk count
-
-Every few seconds the node sends a heartbeat to the metadata service.
-"""
 import hashlib
 import os
 import shutil
@@ -37,7 +25,6 @@ def log(message):
 
 
 def chunk_path(chunk_hash: str) -> Path:
-    """Chunks go in sub-folders named after the first 2 characters, so no folder gets too big."""
     if len(chunk_hash) != 64 or any(c not in "0123456789abcdef" for c in chunk_hash):
         raise HTTPException(400, "chunk id must be a 64-character lowercase SHA-256 hash")
     return DATA_DIR / chunk_hash[:2] / chunk_hash
@@ -60,7 +47,7 @@ async def put_chunk(chunk_hash: str, request: Request):
     path.parent.mkdir(exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_bytes(data)
-    tmp.replace(path)  # write then rename, so a crash never leaves half a chunk
+    tmp.replace(path)
     log(f"PUT {chunk_hash[:12]} ({len(data)} bytes)")
     return {"stored": True, "size": len(data)}
 
@@ -72,7 +59,6 @@ def get_chunk(chunk_hash: str):
         raise HTTPException(404, "chunk not found")
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != chunk_hash:
-        # The bytes on disk changed (bit rot, disk error, tampering): never serve them.
         path.replace(DATA_DIR / "quarantine" / chunk_hash)
         log(f"CORRUPTED {chunk_hash[:12]}: moved to quarantine")
         raise HTTPException(409, "chunk is corrupted on this node")
@@ -97,15 +83,8 @@ def delete_chunk(chunk_hash: str):
     return {"deleted": True}
 
 
-
 @app.post("/scrub")
 def scrub():
-    """Read every chunk on this disk and check it against its hash.
-
-    Corrupted chunks are moved to quarantine (like on a normal read). The answer
-    lists the good chunks with their age, so the metadata service can find copies
-    it does not know about, and the corrupted ones, so it can rebuild them elsewhere.
-    """
     started = time.perf_counter()
     good, corrupted, checked_bytes = {}, [], 0
     for path in all_chunks():
@@ -113,7 +92,7 @@ def scrub():
             data = path.read_bytes()
             age = time.time() - path.stat().st_mtime
         except FileNotFoundError:
-            continue  # deleted while we were scrubbing
+            continue
         checked_bytes += len(data)
         if hashlib.sha256(data).hexdigest() == path.name:
             good[path.name] = round(age)

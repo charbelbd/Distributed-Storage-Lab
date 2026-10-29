@@ -1,7 +1,3 @@
-"""Phase 1 check: is everything we need for the project installed and ready?
-
-Run it with:  python scripts/check_env.py
-"""
 import os
 import shutil
 import subprocess
@@ -13,7 +9,6 @@ NODES = [f"node{i}" for i in range(1, 9)]
 
 
 def run(command, all_lines=False):
-    """Run a command and return its first line of output (or all of it), or None if it fails."""
     if shutil.which(command[0]) is None:
         return None
     try:

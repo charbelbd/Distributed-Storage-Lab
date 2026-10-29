@@ -1,0 +1,72 @@
+{
+  "workload": "large",
+  "date": "2026-10-29 13:50",
+  "passes": [
+    {
+      "label": "large, replication x3",
+      "bucket": "large-rep-7bac",
+      "redundancy": "replication",
+      "chunking": "fixed",
+      "files": 10,
+      "bytes": 5201002496,
+      "clients": 2,
+      "upload_seconds": 30.77,
+      "upload_files_per_s": 0.3,
+      "upload_mb_per_s": 161.2,
+      "upload_latency_ms": {
+        "p50": 4802.4,
+        "p95": 10788.7,
+        "p99": 10788.7
+      },
+      "download_seconds": 12.95,
+      "download_files_per_s": 0.8,
+      "download_mb_per_s": 382.9,
+      "verified": "10/10",
+      "chunks_new": 1217,
+      "chunks_deduplicated": 24,
+      "unique_bytes_added": 5096144896,
+      "disk_bytes_added": 15288434688,
+      "disk_per_byte": 2.94
+    },
+    {
+      "label": "large, erasure coding 4+2",
+      "bucket": "large-ec-7bac",
+      "redundancy": "ec",
+      "chunking": "fixed",
+      "files": 10,
+      "bytes": 5201002496,
+      "clients": 2,
+      "upload_seconds": 29.87,
+      "upload_files_per_s": 0.3,
+      "upload_mb_per_s": 166.1,
+      "upload_latency_ms": {
+        "p50": 5268.9,
+        "p95": 9308.8,
+        "p99": 9308.8
+      },
+      "download_seconds": 16.57,
+      "download_files_per_s": 0.6,
+      "download_mb_per_s": 299.3,
+      "verified": "10/10",
+      "chunks_new": 1217,
+      "chunks_deduplicated": 24,
+      "unique_bytes_added": 5096144896,
+      "disk_bytes_added": 7644217344,
+      "disk_per_byte": 1.47
+    }
+  ],
+  "disk_image_dedup_fixed": {
+    "v1_chunks": 128,
+    "v2_chunks": 129,
+    "v2_deduplicated": 129,
+    "percent": 100.0,
+    "seconds": 0.584
+  },
+  "disk_image_dedup_cdc": {
+    "v1_chunks": 114,
+    "v2_chunks": 115,
+    "v2_deduplicated": 109,
+    "percent": 94.8,
+    "seconds": 18.511
+  }
+}

@@ -1,17 +1,3 @@
-"""How a chunk is kept safe on the storage nodes.
-
-Replication: the chunk is copied to N nodes. A write succeeds when W nodes have
-    stored it, and a read needs R nodes to confirm they hold a good copy.
-    With W + R > N, every read overlaps at least one node of every successful write.
-
-Erasure coding (Reed-Solomon k + m, with zfec): the chunk is cut into k data
-    pieces and m parity pieces are computed, each piece on a different node.
-    Any k of the k + m pieces rebuild the chunk, so m nodes can be lost, and the
-    extra storage is only (k + m) / k = 1.5x for 4 + 2, instead of 3x for 3 copies.
-
-Every piece is itself content-addressed: it is stored under the SHA-256 of its bytes,
-so the storage nodes check pieces exactly like they check whole chunks.
-"""
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
@@ -21,10 +7,6 @@ from urllib3.util.retry import Retry
 from zfec.easyfec import Decoder, Encoder
 
 http = requests.Session()
-# Connections to the nodes are kept open and reused. When a node container is
-# restarted, its old connections are dead: retry on a fresh connection instead of
-# treating a healthy node as missing. (Safe for every method: chunks are named by
-# their content, so storing or deleting one twice changes nothing.)
 http.mount("http://", HTTPAdapter(pool_maxsize=32, max_retries=Retry(
     total=2, connect=2, read=1, status=0, backoff_factor=0.05, allowed_methods=None, raise_on_status=False)))
 pool = ThreadPoolExecutor(max_workers=16)
@@ -47,7 +29,6 @@ def put(url, piece_hash, data):
 
 
 def get(url, piece_hash):
-    """The piece's bytes if this node returns a correct copy, otherwise None."""
     try:
         r = http.get(f"{url}/chunks/{piece_hash}", timeout=30)
         return r.content if r.status_code == 200 and sha(r.content) == piece_hash else None
@@ -62,10 +43,7 @@ def has(url, piece_hash):
         return False
 
 
-# ---------- replication ----------
-
 def write_replicated(data, chunk_hash, targets, url_of, write_quorum):
-    """Send the chunk to every target node in parallel; succeed if at least W stored it."""
     results = list(pool.map(lambda n: put(url_of(n), chunk_hash, data), targets))
     stored = [n for n, ok in zip(targets, results) if ok]
     if len(stored) < write_quorum:
@@ -74,7 +52,6 @@ def write_replicated(data, chunk_hash, targets, url_of, write_quorum):
 
 
 def read_replicated(chunk_hash, holders, url_of, read_quorum):
-    """Read one good copy and make sure at least R holders confirm they have it."""
     data, confirmed = None, 0
     for node in holders:
         url = url_of(node)
@@ -90,10 +67,7 @@ def read_replicated(chunk_hash, holders, url_of, read_quorum):
     raise QuorumError(f"read quorum not met: {confirmed} of {len(holders)} copies confirmed, R={read_quorum}")
 
 
-# ---------- erasure coding ----------
-
 def encode(data, k, m):
-    """Split into k data pieces + m parity pieces (all the same size)."""
     pieces = Encoder(k, k + m).encode(data)
     padding = len(pieces[0]) * k - len(data)
     return pieces, padding
@@ -105,19 +79,17 @@ def decode(pieces_by_index, k, m, padding):
 
 
 def write_ec(data, targets, url_of, k, m):
-    """Store piece i on targets[i]. At least k + 1 pieces must be stored (the chunk survives one more loss)."""
     pieces, padding = encode(data, k, m)
     hashes = [sha(p) for p in pieces]
     results = list(pool.map(lambda i: put(url_of(targets[i]), hashes[i], pieces[i]), range(k + m)))
     stored = sum(results)
     if stored < k + 1:
         raise QuorumError(f"only {stored} of {k + m} pieces stored, need at least {k + 1}")
-    nodes = [t if ok else "" for t, ok in zip(targets, results)]   # "" = piece missing, to be repaired
+    nodes = [t if ok else "" for t, ok in zip(targets, results)]
     return hashes, nodes, padding
 
 
 def read_pieces(piece_hashes, nodes, url_of, k, skip=()):
-    """Collect k good pieces, trying the nodes in order."""
     found = {}
     for i, (piece_hash, node) in enumerate(zip(piece_hashes, nodes)):
         if len(found) == k:

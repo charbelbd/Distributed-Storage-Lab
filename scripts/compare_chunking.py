@@ -1,18 +1,10 @@
-"""Phase 3 test: fixed-size chunking compared with content-defined chunking (FastCDC).
-
-We take a 200 MB file, then make a second version with 100 bytes inserted near
-the start (like editing a document or a disk image). For each method we count how
-many chunks of the new version already exist in the old one, i.e. can be deduplicated.
-
-Run:  python scripts/compare_chunking.py
-"""
 import hashlib
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from metadata.chunking import cdc_chunks, fixed_chunks  # noqa: E402
+from metadata.chunking import cdc_chunks, fixed_chunks
 
 SIZE = 200 * 1024 * 1024
 original = os.urandom(SIZE)

@@ -1,13 +1,3 @@
-"""Phase 8: benchmark the framework on the two workloads (run make_datasets.py first).
-
-  python scripts/benchmark.py small    5,000 small files, uploaded by 16 clients at once,
-                                       to a replicated and to an erasure-coded bucket
-  python scripts/benchmark.py large    10 large files, 2 clients at once, replicated and
-                                       erasure coded; the two disk images also with FastCDC
-
-Every file is downloaded again and compared with its SHA-256 from the manifest.
-Results are printed and saved in results/benchmark-<workload>.json and .md.
-"""
 import hashlib
 import json
 import statistics
@@ -20,7 +10,7 @@ from pathlib import Path
 import requests
 
 GATEWAY = "http://localhost:8080"
-KEY = {"X-API-Key": "bench-key-456"}          # the key without rate limit
+KEY = {"X-API-Key": "bench-key-456"}
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "datasets"
 RESULTS = ROOT / "results"
@@ -62,7 +52,6 @@ def download(bucket, name, expected):
 
 
 def run_pass(label, bucket, redundancy, files, manifest, workers, chunking="fixed"):
-    """Upload every file, then download and verify every file. Returns the measures."""
     api("POST", "/buckets", json={"name": bucket, "redundancy": redundancy})
     before = status()
     total = sum(p.stat().st_size for p in files)

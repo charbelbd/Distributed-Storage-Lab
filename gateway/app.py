@@ -1,23 +1,3 @@
-"""API gateway: the only service users talk to.
-
-It checks the API key, applies rate limiting, and forwards requests to the
-metadata service, streaming the bodies both ways so large uploads and downloads
-never sit in memory. Search goes to Elasticsearch (PostgreSQL if it is down).
-It also serves the web UI.
-
-Endpoints (all need the header  X-API-Key: <key>, or ?api_key=<key> for browser downloads)
-  POST   /buckets                         create a bucket {name, redundancy: replication|ec, ...}
-  GET    /buckets                         list buckets
-  PUT    /buckets/{b}/objects/{key}       upload (streamed). Tags: X-Tag-<name>: <value>. ?chunking=fixed|cdc
-  GET    /buckets/{b}/objects/{key}       download, supports Range: bytes=start-end
-  HEAD   /buckets/{b}/objects/{key}       size and version
-  DELETE /buckets/{b}/objects/{key}       delete (all versions)
-  GET    /buckets/{b}/objects?prefix=     list objects
-  GET    /meta/{b}/{key}                  object metadata (versions, chunks, where they are)
-  GET    /search?prefix=&bucket=&min_size=&max_size=&after=&before=&tag=name:value
-  GET    /status                          nodes, free space, chunks per node, degraded objects, repair
-  POST   /scrub                           re-check every chunk on every node now
-"""
 import os
 import time
 from pathlib import Path
@@ -29,7 +9,6 @@ from starlette.background import BackgroundTask
 
 METADATA_URL = os.environ.get("METADATA_URL", "http://localhost:8000")
 ES_URL = os.environ.get("ELASTICSEARCH_URL", "http://localhost:9200")
-# "key=requests per second" pairs; 0 means no limit.
 API_KEYS = dict(item.split("=") for item in os.environ.get("API_KEYS", "dev-key-123=20,bench-key-456=0").split(","))
 API_KEYS = {key: float(rate) for key, rate in API_KEYS.items()}
 PUBLIC = ("/", "/health", "/docs", "/openapi.json", "/ui")
@@ -51,14 +30,12 @@ TAGS = [{"name": n, "description": d} for n, d in [
 ]]
 app = FastAPI(title="Storage gateway", description=DOCS, version="1.0", openapi_tags=TAGS)
 client = httpx.AsyncClient(base_url=METADATA_URL, timeout=httpx.Timeout(600, connect=5))
-buckets_of_tokens = {}   # api key -> (tokens left, last refill time)
+buckets_of_tokens = {}
 
 
 def log(message):
     print(f"{time.strftime('%H:%M:%S')} [gateway] {message}", flush=True)
 
-
-# ---------- authentication and rate limiting ----------
 
 def allow(key):
     """Token bucket: each key gets `rate` requests per second, with bursts up to 2x that."""
@@ -92,8 +69,6 @@ async def security(request: Request, call_next):
         log(f"{request.method} {path} -> {response.status_code} ({(time.perf_counter() - started) * 1000:.0f} ms)")
     return response
 
-
-# ---------- forwarding to the metadata service ----------
 
 FORWARD_REQUEST = ("content-type", "content-length", "range")
 FORWARD_RESPONSE = ("content-type", "content-length", "content-range", "accept-ranges", "x-object-version", "last-modified")
@@ -153,8 +128,6 @@ async def scrub(request: Request):
     return await forward(request, "/scrub")
 
 
-# ---------- search ----------
-
 @app.get("/search", tags=["Search"])
 async def search(request: Request, prefix: str = "", bucket: str | None = None, min_size: int | None = None,
                  max_size: int | None = None, after: str | None = None, before: str | None = None,
@@ -184,8 +157,6 @@ async def search(request: Request, prefix: str = "", bucket: str | None = None, 
         log(f"Elasticsearch unavailable ({type(error).__name__}), searching PostgreSQL instead")
         return await forward(request, "/search")
 
-
-# ---------- health and web UI ----------
 
 @app.get("/health", include_in_schema=False)
 def health():
