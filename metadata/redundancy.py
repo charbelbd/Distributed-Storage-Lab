@@ -16,9 +16,17 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from zfec.easyfec import Decoder, Encoder
 
 http = requests.Session()
+# Connections to the nodes are kept open and reused. When a node container is
+# restarted, its old connections are dead: retry on a fresh connection instead of
+# treating a healthy node as missing. (Safe for every method: chunks are named by
+# their content, so storing or deleting one twice changes nothing.)
+http.mount("http://", HTTPAdapter(pool_maxsize=32, max_retries=Retry(
+    total=2, connect=2, read=1, status=0, backoff_factor=0.05, allowed_methods=None, raise_on_status=False)))
 pool = ThreadPoolExecutor(max_workers=16)
 
 

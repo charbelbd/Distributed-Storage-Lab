@@ -50,8 +50,11 @@ def wait_alive(count=8, timeout=60):
 
 
 def read(bucket, key):
-    r = api("GET", f"/buckets/{bucket}/objects/{key}")
-    return r.status_code, (r.content == DATA if r.status_code == 200 else r.json().get("detail"))
+    try:
+        r = api("GET", f"/buckets/{bucket}/objects/{key}")
+        return r.status_code, (r.content == DATA if r.status_code == 200 else r.json().get("detail"))
+    except requests.RequestException as error:   # the download broke in the middle
+        return 0, f"download interrupted: {type(error).__name__}"
 
 
 api("POST", "/buckets", json={"name": REP, "redundancy": "replication"})
@@ -108,7 +111,8 @@ degraded_seen = 0
 while time.time() - started < 90:
     s = api("GET", "/status").json()
     degraded_seen = max(degraded_seen, s["degraded_objects"])
-    if s["degraded_objects"] == 0 and s["repair"]["total_repaired"] > repaired_before:
+    # Done only after the crash was noticed (objects degraded) and repaired (back to 0).
+    if degraded_seen and s["degraded_objects"] == 0 and s["repair"]["total_repaired"] > repaired_before:
         break
     time.sleep(2)
 seconds = time.time() - started
