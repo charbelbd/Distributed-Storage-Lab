@@ -37,17 +37,20 @@ def small(count=5000, duplicates=250):
     for i in range(originals):
         size = rng.randint(1024, 50 * 1024)
         if i % 2:
-            records, body = [], ""
-            while len(body) < size - 200:     # stop just under the target, so the JSON stays valid
-                records.append({"id": len(records) + 1, "name": " ".join(rng.choices(WORDS, k=3)),
-                                "value": round(rng.random() * 1000, 3), "tags": rng.sample(WORDS, 3)})
-                body = json.dumps({"file": i, "records": records}, indent=1)
-            name, data = f"record-{i:04d}.json", body.encode()
+            records, length = [], 0
+            while length < size - 200:        # stop just under the target, so the JSON stays valid
+                record = {"id": len(records) + 1, "name": " ".join(rng.choices(WORDS, k=3)),
+                          "value": round(rng.random() * 1000, 3), "tags": rng.sample(WORDS, 3)}
+                records.append(record)
+                length += len(json.dumps(record, indent=1)) + 4   # running total, no need to re-encode
+            data = json.dumps({"file": i, "records": records}, indent=1).encode()
+            if len(data) > size:   # the estimate was a bit low: keep the right share of the records
+                records = records[: int(len(records) * size / len(data) * 0.97)]
+                data = json.dumps({"file": i, "records": records}, indent=1).encode()
+            name = f"record-{i:04d}.json"
         else:
-            text = []
-            while sum(len(w) + 1 for w in text) < size:
-                text.append(rng.choice(WORDS))
-            name, data = f"document-{i:04d}.txt", " ".join(text).encode()[:size]
+            words = rng.choices(WORDS, k=size // 4)      # about 6 characters per word, more than enough
+            name, data = f"document-{i:04d}.txt", " ".join(words).encode()[:size]
         (folder / name).write_bytes(data)
         manifest[name] = hashlib.sha256(data).hexdigest()
         total += len(data)
