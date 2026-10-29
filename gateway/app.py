@@ -34,7 +34,22 @@ API_KEYS = dict(item.split("=") for item in os.environ.get("API_KEYS", "dev-key-
 API_KEYS = {key: float(rate) for key, rate in API_KEYS.items()}
 PUBLIC = ("/", "/health", "/docs", "/openapi.json", "/ui")
 
-app = FastAPI(title="Storage gateway", description=__doc__)
+DOCS = """
+The entry point of the distributed storage framework. Every request needs an API key in the
+**X-API-Key** header (or **?api_key=** for browser downloads). Keys are rate limited.
+
+* **Buckets**: each bucket is protected by replication (N copies, quorums W and R) or erasure coding (k + m).
+* **Objects**: streamed uploads with tags (**X-Tag-name: value**), downloads with **Range: bytes=a-b**, versions.
+* **Search**: by key prefix, size, date and tags, in Elasticsearch.
+* **Cluster**: node health, chunks per node, degraded objects, repair and scrubbing.
+"""
+TAGS = [{"name": n, "description": d} for n, d in [
+    ("Buckets", "Create and list buckets."),
+    ("Objects", "Upload, download, list, delete objects and read their metadata."),
+    ("Search", "Find objects by key prefix, size, date and tags."),
+    ("Cluster", "State of the storage nodes, repair and scrubbing."),
+]]
+app = FastAPI(title="Storage gateway", description=DOCS, version="1.0", openapi_tags=TAGS)
 client = httpx.AsyncClient(base_url=METADATA_URL, timeout=httpx.Timeout(600, connect=5))
 buckets_of_tokens = {}   # api key -> (tokens left, last refill time)
 
@@ -102,32 +117,37 @@ async def forward(request: Request, path: str):
                              background=BackgroundTask(upstream.aclose))
 
 
-@app.api_route("/buckets", methods=["GET", "POST"])
+@app.api_route("/buckets", methods=["GET", "POST"], tags=["Buckets"])
 async def buckets(request: Request):
+    """GET lists the buckets. POST creates one: {"name", "redundancy": "replication" or "ec", "replicas", "write_quorum", "read_quorum", "k", "m"}."""
     return await forward(request, "/buckets")
 
 
-@app.api_route("/buckets/{bucket}/objects", methods=["GET"])
+@app.api_route("/buckets/{bucket}/objects", methods=["GET"], tags=["Objects"])
 async def objects(bucket: str, request: Request):
+    """List the objects of a bucket (?prefix= to filter by key prefix)."""
     return await forward(request, f"/buckets/{bucket}/objects")
 
 
-@app.api_route("/buckets/{bucket}/objects/{key:path}", methods=["GET", "PUT", "HEAD", "DELETE"])
+@app.api_route("/buckets/{bucket}/objects/{key:path}", methods=["GET", "PUT", "HEAD", "DELETE"], tags=["Objects"])
 async def single_object(bucket: str, key: str, request: Request):
+    """PUT uploads (streamed; tags as X-Tag-name headers; ?chunking=fixed or cdc). GET downloads (Range supported, ?version=). HEAD gives size and version. DELETE removes every version."""
     return await forward(request, f"/buckets/{bucket}/objects/{key}")
 
 
-@app.get("/meta/{bucket}/{key:path}")
+@app.get("/meta/{bucket}/{key:path}", tags=["Objects"])
 async def metadata(bucket: str, key: str, request: Request):
+    """Object metadata: size, versions, tags, and every chunk with the nodes that hold it."""
     return await forward(request, f"/meta/{bucket}/{key}")
 
 
-@app.get("/status")
+@app.get("/status", tags=["Cluster"])
 async def status(request: Request):
+    """Nodes (health, free space, chunks), degraded objects, repair progress and the last scrub."""
     return await forward(request, "/status")
 
 
-@app.post("/scrub")
+@app.post("/scrub", tags=["Cluster"])
 async def scrub(request: Request):
     """Check every chunk on every node now (it also runs on its own periodically)."""
     return await forward(request, "/scrub")
@@ -135,10 +155,12 @@ async def scrub(request: Request):
 
 # ---------- search ----------
 
-@app.get("/search")
+@app.get("/search", tags=["Search"])
 async def search(request: Request, prefix: str = "", bucket: str | None = None, min_size: int | None = None,
                  max_size: int | None = None, after: str | None = None, before: str | None = None,
-                 tag: list[str] | None = Query(None), limit: int = 100):
+                 tag: list[str] | None = Query(None, description="name:value, can be repeated"), limit: int = 100):
+    """Search objects by key prefix, bucket, size range (bytes), creation date range and tags.
+    Uses Elasticsearch, or PostgreSQL if Elasticsearch is down."""
     filters = [{"prefix": {"key": prefix}}] if prefix else []
     if bucket:
         filters.append({"term": {"bucket": bucket}})
@@ -165,7 +187,7 @@ async def search(request: Request, prefix: str = "", bucket: str | None = None, 
 
 # ---------- health and web UI ----------
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health():
     return {"status": "UP"}
 
@@ -173,12 +195,12 @@ def health():
 UI = Path(__file__).parent / "ui"
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def home():
     return FileResponse(UI / "index.html")
 
 
-@app.get("/ui/{name}")
+@app.get("/ui/{name}", include_in_schema=False)
 def ui_file(name: str):
     path = (UI / name).resolve()
     if path.parent != UI.resolve() or not path.is_file():
