@@ -103,8 +103,31 @@ rels = open(rels_path, encoding="utf8").read()
 rels = re.sub(r'<Relationship Id="[^"]+" Type="[^"]+/image" Target="media/[^"]+"/>', "", rels)
 new_rels = []
 
+def png_size(path):
+    with open(path, "rb") as f:
+        head = f.read(24)
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def add_figure(src, cap, width_emu=5669280):
+    """Insert a picture (scaled to width_emu, keeping its proportions) with a numbered caption."""
+    n = len(new_rels) + 1
+    w, h = png_size(os.path.join(base, src))
+    shutil.copy(os.path.join(base, src), os.path.join(media, f"image{n}.png"))
+    rid = f"rIdFig{n}"
+    new_rels.append(f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image{n}.png"/>')
+    parts.append(image(rid, n, width_emu, int(width_emu * h / w)))
+    parts.append(caption(n, cap))
+
+
 for item in content.DOC:
     kind = item[0]
+    if kind == "shot":     # ("shot", label, caption, what): grey placeholder to replace with the screenshot
+        add_figure(f"placeholders/shot-{item[1]}.png", item[2])
+        continue
+    if kind == "flow":     # ("flow", png, caption): a flowchart, a bit narrower than the page
+        add_figure(item[1], item[2], width_emu=4680000)
+        continue
     if kind == "h": parts.append(heading(item[1]))
     elif kind == "p": parts.append(body(item[1]))
     elif kind == "label": parts.append(label(item[1]))

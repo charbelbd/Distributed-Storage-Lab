@@ -30,6 +30,7 @@ services:
       EC_K: "4"
       EC_M: "2"
       REPAIR_AFTER_SECONDS: "20"
+      SCRUB_INTERVAL_SECONDS: "3600"   # check every chunk once an hour (also "Scrub now" in the UI)
     ports: ["8000:8000"]
     depends_on: [postgres]
 
