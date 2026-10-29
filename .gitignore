@@ -9,3 +9,7 @@ data/*/*
 
 # Generated test datasets (the scripts that create them are committed)
 datasets/
+
+# Report building
+report-build/out-*/
+~$*
