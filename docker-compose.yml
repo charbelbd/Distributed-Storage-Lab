@@ -1,0 +1,53 @@
+# docker compose up --build -d
+# PostgreSQL + metadata service + 4 storage nodes, each node with its own volume.
+
+x-node: &node
+  build: { context: ., dockerfile: storage_node/Dockerfile }
+  image: storage-node
+  depends_on: [metadata]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: storage
+      POSTGRES_PASSWORD: storage
+      POSTGRES_DB: storage
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  metadata:
+    build: { context: ., dockerfile: metadata/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://storage:storage@postgres:5432/storage
+      REPLICAS: "3"
+    ports: ["8000:8000"]
+    depends_on: [postgres]
+
+  node1:
+    <<: *node
+    environment: { NODE_ID: node1, PUBLIC_URL: "http://node1:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9001:9000"]
+    volumes: [node1-data:/data]
+  node2:
+    <<: *node
+    environment: { NODE_ID: node2, PUBLIC_URL: "http://node2:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9002:9000"]
+    volumes: [node2-data:/data]
+  node3:
+    <<: *node
+    environment: { NODE_ID: node3, PUBLIC_URL: "http://node3:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9003:9000"]
+    volumes: [node3-data:/data]
+  node4:
+    <<: *node
+    environment: { NODE_ID: node4, PUBLIC_URL: "http://node4:9000", METADATA_URL: "http://metadata:8000" }
+    ports: ["9004:9000"]
+    volumes: [node4-data:/data]
+
+volumes:
+  pgdata:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:
